@@ -18,7 +18,7 @@ Step 1: Clone the Repository
 
     Download the source code or clone the repository using:
 
-    git clone https://github.com/your-username/bytehound-sniffer.git  
+    git clone https://github.com/kalokidennis/bytehound-sniffer.git  
     cd bytehound-sniffer  
 
 Step 2: Set Up Virtual Environment (Linux Recommended)
