@@ -1,14 +1,20 @@
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem, QPushButton, QMessageBox, QSizePolicy
+import os
+import csv
+from PyQt5.QtWidgets import (
+    QDialog, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
+    QPushButton, QMessageBox, QFileDialog, QSizePolicy
+)
 from PyQt5.QtCore import Qt
+from docx import Document
 
 
 class PacketAnalysisWindow(QDialog):
     def __init__(self, packets, parent=None):
         super().__init__(parent)
         self.packets = packets
-        self.setWindowTitle("Packet Analysis Window")  # Title of the window
-        self.setMinimumSize(600, 400)  # Set minimum size to ensure the window is not too small
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)  # Enable minimize and maximize buttons
+        self.setWindowTitle("Packet Analysis Window")
+        self.setMinimumSize(600, 400)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)
         self.init_ui()
 
     def init_ui(self):
@@ -21,24 +27,15 @@ class PacketAnalysisWindow(QDialog):
 
         # Table to display captured packets
         self.packet_table = QTableWidget()
-        self.packet_table.setColumnCount(9)  # Including "Safe" column
+        self.packet_table.setColumnCount(9)
         self.packet_table.setHorizontalHeaderLabels([
             'Source MAC', 'Destination MAC', 'Source IP', 'Destination IP',
             'Source Port', 'Destination Port', 'Protocol', 'Summary', 'Safe'
         ])
-        self.packet_table.setRowCount(len(self.packets))  # Set rows based on captured packets
+        self.packet_table.setRowCount(len(self.packets))
         self.populate_table()
-
-        # Set the table size policy to expand in both directions
         self.packet_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        # Ensure the horizontal header stretches
         self.packet_table.horizontalHeader().setStretchLastSection(True)
-
-        # After populating the table, adjust column widths
-        self.adjust_column_widths()
-
-        # Add the table to the layout
         layout.addWidget(self.packet_table)
 
         # Analyze button
@@ -69,18 +66,25 @@ class PacketAnalysisWindow(QDialog):
     def analyze_packets(self):
         """Analyze captured packets and show results."""
         try:
-            print("Analyze button clicked")  # Debugging log
-            print(f"Captured packets: {self.packets}")  # Debugging log
-
             if not self.packets:
                 QMessageBox.warning(self, "Warning", "No packets to analyze!")
                 return
 
-            # Perform the packet analysis
-            analysis_result = self.perform_analysis()
-            QMessageBox.information(self, "Analysis Result", analysis_result)
+            # Perform the analysis
+            analysis_result, protocol_counts = self.perform_analysis()
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Analysis Result")
+            msg_box.setText(analysis_result)
+            msg_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Save)
+
+            save_button = msg_box.button(QMessageBox.Save)
+            save_button.setText("Save Report")
+
+            result = msg_box.exec_()
+            if result == QMessageBox.Save:
+                self.generate_report(analysis_result, protocol_counts)
+
         except Exception as e:
-            print(f"Error during analysis: {e}")  # Debugging log
             QMessageBox.critical(self, "Error", f"An error occurred during analysis: {e}")
 
     def perform_analysis(self):
@@ -89,49 +93,98 @@ class PacketAnalysisWindow(QDialog):
         safe_packets = sum(1 for packet in self.packets if packet.get('safe', True))
         unsafe_packets = total_packets - safe_packets
 
+        # Count packets per protocol
+        protocol_counts = {}
+        for packet in self.packets:
+            protocol = packet.get('protocol', 'Unknown')
+            protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
+
         analysis_result = (
             f"Total Packets Captured: {total_packets}\n"
             f"Safe Packets: {safe_packets} ({(safe_packets / total_packets) * 100:.2f}%)\n"
-            f"Unsafe Packets: {unsafe_packets} ({(unsafe_packets / total_packets) * 100:.2f}%)"
+            f"Unsafe Packets: {unsafe_packets} ({(unsafe_packets / total_packets) * 100:.2f}%)\n"
+            f"\nPackets per Protocol:\n" +
+            "\n".join([f"{protocol}: {count} packets" for protocol, count in protocol_counts.items()])
         )
 
-        return analysis_result
+        return analysis_result, protocol_counts
 
-    def is_safe(self, packet):
-        """Check whether a packet is safe based on various criteria."""
-        unsafe_ips = {'192.168.1.100', '10.0.0.1'}  # Example unsafe IPs
-        unsafe_ports = {4444, 23}  # Example unsafe ports (e.g., remote access)
+    def generate_report(self, analysis_result, protocol_counts):
+        """Generate and save a report with packet data and analysis results."""
+        save_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Report",
+            os.path.expanduser("~"),
+            "Word Files (*.docx);;CSV Files (*.csv);;Text Files (*.txt);;All Files (*)"
+        )
 
-        # Check for suspicious IP addresses or ports
-        if packet.get('ip_src') in unsafe_ips or packet.get('ip_dst') in unsafe_ips:
-            return False
-        if packet.get('sport') in unsafe_ports or packet.get('dport') in unsafe_ports:
-            return False
+        if not save_path:
+            return
 
-        # Further checks can be added here, such as detecting known attack signatures
-        return True
+        try:
+            if selected_filter == "Word Files (*.docx)" or save_path.endswith(".docx"):
+                self.save_report_as_docx(save_path, analysis_result)
+            elif selected_filter == "CSV Files (*.csv)" or save_path.endswith(".csv"):
+                self.save_report_as_csv(save_path)
+            else:
+                self.save_report_as_txt(save_path, analysis_result)
 
-    def closeEvent(self, event):
-        """Ensure only the analysis window closes without affecting the parent."""
-        event.accept()
+            QMessageBox.information(self, "Success", f"Report saved to {save_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not save report: {e}")
 
-    def adjust_column_widths(self):
-        """Make the 'Summary' column 4 times its current size and 'Source MAC' and 'Destination MAC' columns 2 times their size, by removing space from the 'Safe' column."""
-        summary_column_width = self.packet_table.columnWidth(7)  # Get current width of the 'Summary' column
-        safe_column_width = self.packet_table.columnWidth(8)  # Get current width of the 'Safe' column
-        source_mac_column_width = self.packet_table.columnWidth(0)  # Get current width of the 'Source MAC' column
-        dest_mac_column_width = self.packet_table.columnWidth(1)  # Get current width of the 'Destination MAC' column
+    def save_report_as_csv(self, save_path):
+        """Save the report as a CSV file, mirroring the UI table structure."""
+        with open(save_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
 
-        # Calculate how much space to transfer
-        width_to_transfer = (summary_column_width * 3)  # 3 times the current width of the Summary column
-        mac_columns_width_increase = (source_mac_column_width + dest_mac_column_width)  # Double the current size of MAC columns
+            # Write table headers
+            headers = [self.packet_table.horizontalHeaderItem(i).text() for i in range(self.packet_table.columnCount())]
+            writer.writerow(headers)
 
-        # Set new width for the 'Summary' column
-        self.packet_table.setColumnWidth(7, summary_column_width + width_to_transfer)
+            # Write table rows
+            for row in range(self.packet_table.rowCount()):
+                row_data = [self.packet_table.item(row, col).text() if self.packet_table.item(row, col) else '' for col in range(self.packet_table.columnCount())]
+                writer.writerow(row_data)
 
-        # Set new width for the 'Source MAC' and 'Destination MAC' columns (doubling their size)
-        self.packet_table.setColumnWidth(0, source_mac_column_width + mac_columns_width_increase // 2)
-        self.packet_table.setColumnWidth(1, dest_mac_column_width + mac_columns_width_increase // 2)
+    def save_report_as_txt(self, save_path, analysis_result):
+        """Save the report as a TXT file, including the table as visible in the UI."""
+        with open(save_path, 'w') as txtfile:
+            txtfile.write("Packet Analysis Report\n")
+            txtfile.write("=" * 50 + "\n")
+            txtfile.write(f"{analysis_result}\n\n")
+            txtfile.write("Captured Packet Details:\n")
+            txtfile.write("=" * 50 + "\n")
 
-        # Set new width for the 'Safe' column, reducing it by the transferred width
-        self.packet_table.setColumnWidth(8, safe_column_width - width_to_transfer - mac_columns_width_increase)
+            # Write table headers
+            headers = [self.packet_table.horizontalHeaderItem(i).text() for i in range(self.packet_table.columnCount())]
+            txtfile.write("\t".join(headers) + "\n")
+
+            # Write table rows
+            for row in range(self.packet_table.rowCount()):
+                row_data = [self.packet_table.item(row, col).text() if self.packet_table.item(row, col) else '' for col in range(self.packet_table.columnCount())]
+                txtfile.write("\t".join(row_data) + "\n")
+
+    def save_report_as_docx(self, save_path, analysis_result):
+        """Save the report as a DOCX file, with a well-formatted table."""
+        doc = Document()
+
+        # Add title
+        doc.add_heading("Packet Analysis Report", level=1)
+        doc.add_paragraph(analysis_result)
+
+        # Add table
+        table = doc.add_table(rows=self.packet_table.rowCount() + 1, cols=self.packet_table.columnCount())
+        table.style = 'Table Grid'
+
+        # Add headers
+        headers = [self.packet_table.horizontalHeaderItem(i).text() for i in range(self.packet_table.columnCount())]
+        for col, header in enumerate(headers):
+            table.cell(0, col).text = header
+
+        # Add rows
+        for row in range(self.packet_table.rowCount()):
+            for col in range(self.packet_table.columnCount()):
+                table.cell(row + 1, col).text = self.packet_table.item(row, col).text() if self.packet_table.item(row, col) else ''
+
+        doc.save(save_path)
