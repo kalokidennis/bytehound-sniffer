@@ -5,9 +5,10 @@ from PyQt5.QtWidgets import (
     QMessageBox, QDialog, QLineEdit, QComboBox
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QColor, QPalette, QIcon
+from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QClipboard
 from sniffer_backend import PacketSnifferThread  # Ensure this imports the updated backend
 from analysis_module import PacketAnalysisWindow  # Import the new analysis window
+from wireless_setting import WirelessSettingsWindow
 
 FILTER_OPTIONS = [
     "All Traffic",
@@ -18,7 +19,7 @@ FILTER_OPTIONS = [
     "By IP Address"
 ]
 
-class PacketSnifferUI(QMainWindow):  # Correct class name
+class PacketSnifferUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.sniffer_thread = None
@@ -54,6 +55,8 @@ class PacketSnifferUI(QMainWindow):  # Correct class name
             'Source MAC', 'Destination MAC', 'Source IP', 'Destination IP',
             'Source Port', 'Destination Port', 'Protocol', 'Summary'
         ])
+        # Make the entire row selectable
+        self.packet_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.packet_table.horizontalHeader().setStyleSheet(
             "QHeaderView::section { background-color: lightgrey; color: black; font-weight: bold; }"
         )
@@ -104,6 +107,15 @@ class PacketSnifferUI(QMainWindow):  # Correct class name
         self.update_timer.setInterval(1000)  # Update every 1 second
         self.update_timer.timeout.connect(self.flush_pending_packets)
 
+        # Wireless settings menu action
+        wireless_action = QAction("Wireless Settings", self)
+        wireless_action.triggered.connect(self.open_wireless_settings)
+
+        # Add wireless settings action to the menu
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("Settings")
+        file_menu.addAction(wireless_action)
+
     def add_toolbar_actions(self, toolbar):
         actions = [
             ('Open...', self.open_file_dialog),
@@ -111,8 +123,8 @@ class PacketSnifferUI(QMainWindow):  # Correct class name
             ('Packet List', self.view_packet_list),
             ('Start Capture', self.start_sniffing),
             ('Stop Capture', self.stop_sniffing),
-            ('Wireless Settings', self.wireless_settings),
-            ('Analyze', self.analyze_packets),  # Ensure this action is correctly tied to the method
+            ('Wireless Settings', self.open_wireless_settings),
+            ('Analyze', self.analyze_packets),
         ]
         for action_name, action_method in actions:
             action = QAction(action_name, self)
@@ -175,6 +187,14 @@ class PacketSnifferUI(QMainWindow):  # Correct class name
         self.analysis_window = PacketAnalysisWindow(self.captured_packets)
         self.analysis_window.exec_()
 
+    def open_wireless_settings(self):
+        wireless_window = WirelessSettingsWindow(self)
+        wireless_window.exec_()
+    
+    def set_active_network(self, ssid):
+        self.active_network_ssid = ssid
+        print(f"Sniffing restricted to network: {ssid}")
+
     def get_filter_expression(self, selected_filter, custom_filter):
         if selected_filter == "All Traffic":
             return None
@@ -208,21 +228,37 @@ class PacketSnifferUI(QMainWindow):  # Correct class name
                 'Source Port': self.packet_table.item(row, 4).text(),
                 'Destination Port': self.packet_table.item(row, 5).text(),
                 'Protocol': self.packet_table.item(row, 6).text(),
-                'Summary': self.packet_table.item(row, 7).text(),
+                'Summary': self.packet_table.item(row, 7).text()
             }
+            # Create a message box to display the packet details
             msg = QMessageBox()
-            msg.setWindowTitle("Packet Information")
-            msg.setText("Selected Packet Information:")
-            msg.setInformativeText(str(packet_info))
+            msg.setIcon(QMessageBox.Information)
+            msg.setWindowTitle("Packet Details")
+            msg.setText("Details of the Selected Packet:")
+        
+            # Add the packet information to the message box
+            details = "\n".join([f"{key}: {value}" for key, value in packet_info.items()])
+            msg.setInformativeText(details)
+        
+            # Create a "Copy Details" button
+            copy_button = msg.addButton("Copy Details", QMessageBox.ActionRole)
+
+            # Show the message box
             msg.exec_()
-        else:
-            QMessageBox.warning(self, "Warning", "No packet selected!")
+
+            # When the "Copy Details" button is clicked, copy the packet details to the clipboard
+            if msg.clickedButton() == copy_button:
+                clipboard = QApplication.clipboard()
+                clipboard.setText(details)
+                QMessageBox.information(self, "Success", "Packet details copied to clipboard!")
+                
+            # Display the packet info in a separate window (or take further actions)
+            print(packet_info)
 
     def view_packet_list(self):
-        pass
+        # Open a dialog or new window to display a list of captured packets
+        print("Viewing the list of captured packets...")
 
-    def wireless_settings(self):
-        pass
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
